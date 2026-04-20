@@ -9,24 +9,16 @@ import io
 from models.cyclegan import CycleGAN
 
 
-# ============================================================
-# Конфигурация
-# ============================================================
-CHECKPOINT_PATH = "checkpoints/cycle_gan.pt"
+CHECKPOINT_PATH = "checkpoints/weights_gan.pt"
 IMAGE_SIZE = 256
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Нормализация как при обучении
 MEAN = (0.5, 0.5, 0.5)
 STD = (0.5, 0.5, 0.5)
 
 
-# ============================================================
-# Кэшированная загрузка модели (загружается один раз)
-# ============================================================
 @st.cache_resource
 def load_model(checkpoint_path: str):
-    """Загружает модель из чекпоинта и возвращает её в eval-режиме."""
     model = CycleGAN(input_channels=3)
 
     if not os.path.exists(checkpoint_path):
@@ -41,11 +33,8 @@ def load_model(checkpoint_path: str):
     return model
 
 
-# ============================================================
-# Функции предобработки и постобработки
-# ============================================================
+
 def get_transform():
-    """Трансформация входного изображения для инференса."""
     return tr.Compose([
         tr.Resize((IMAGE_SIZE, IMAGE_SIZE), interpolation=Image.BICUBIC),
         tr.ToTensor(),
@@ -54,7 +43,6 @@ def get_transform():
 
 
 def de_normalize(tensor: torch.Tensor) -> np.ndarray:
-    """Обратная нормализация тензора → numpy [H, W, 3] в диапазоне [0, 255]."""
     tensor = tensor.detach().cpu().clone()
     mean_t = torch.tensor(MEAN).view(3, 1, 1)
     std_t = torch.tensor(STD).view(3, 1, 1)
@@ -66,44 +54,31 @@ def de_normalize(tensor: torch.Tensor) -> np.ndarray:
 
 
 def process_image(model, pil_image: Image.Image, direction: str) -> Image.Image:
-    """
-    Принимает PIL-изображение, прогоняет через генератор,
-    возвращает результат как PIL-изображение.
-    """
     transform = get_transform()
 
-    # Конвертируем в RGB на случай RGBA/grayscale
     pil_image = pil_image.convert("RGB")
 
-    # Предобработка
     input_tensor = transform(pil_image).unsqueeze(0).to(DEVICE)
 
-    # Инференс
     with torch.no_grad():
         if direction == "AtoB":
             output_tensor = model.GenAB(input_tensor)
         else:
             output_tensor = model.GenBA(input_tensor)
 
-    # Постобработка
     output_array = de_normalize(output_tensor.squeeze(0))
     output_image = Image.fromarray(output_array)
 
     return output_image
 
 
-# ============================================================
-# Интерфейс Streamlit
-# ============================================================
 def main():
-    # --- Настройки страницы ---
     st.set_page_config(
-        page_title="CycleGAN Demo — Summer ↔ Winter",
+        page_title="CycleGAN — Summer ↔ Winter",
         page_icon="🔄",
         layout="wide",
     )
 
-    # --- Заголовок ---
     st.title("🔄 CycleGAN: Summer ↔ Winter Yosemite")
     st.markdown("""
     Это приложение демонстрирует работу модели CycleGAN, обученной
@@ -115,12 +90,10 @@ def main():
     ---
     """)
 
-    # --- Загрузка модели ---
     with st.spinner("Загрузка модели..."):
         model = load_model(CHECKPOINT_PATH)
     st.success("Модель загружена!")
 
-    # --- Боковая панель: выбор направления ---
     st.sidebar.header("⚙️ Настройки")
     direction = st.sidebar.radio(
         "Направление преобразования:",
@@ -137,15 +110,13 @@ def main():
     - Domain B — Зимние фотографии Йосемити
     """)
 
-    # --- Основная область: загрузка изображения ---
-    st.header(f"📸 {direction}")
+    st.header(f"{direction}")
 
     col_upload, col_result = st.columns(2)
 
     with col_upload:
         st.subheader("Входное изображение")
 
-        # Выбор источника изображения
         input_method = st.radio(
             "Способ загрузки:",
             options=["Загрузить файл", "Использовать пример"],
@@ -164,7 +135,6 @@ def main():
                 uploaded_image = Image.open(uploaded_file)
 
         else:
-            # Примеры изображений
             examples_dir = "examples"
             if os.path.exists(examples_dir):
                 example_files = sorted([
@@ -183,7 +153,6 @@ def main():
             else:
                 st.warning("Папка examples/ не найдена.")
 
-        # Отображение загруженного изображения
         if uploaded_image is not None:
             st.image(
                 uploaded_image,
@@ -195,7 +164,6 @@ def main():
         st.subheader("Результат")
 
         if uploaded_image is not None:
-            # Кнопка запуска
             if st.button("🚀 Преобразовать", type="primary", use_container_width=True):
                 with st.spinner("Обработка изображения..."):
                     result_image = process_image(model, uploaded_image, direction_code)
@@ -206,7 +174,6 @@ def main():
                     use_container_width=True,
                 )
 
-                # Кнопка скачивания результата
                 buf = io.BytesIO()
                 result_image.save(buf, format="PNG")
                 buf.seek(0)
@@ -221,7 +188,6 @@ def main():
         else:
             st.info("👈 Загрузите изображение слева для преобразования")
 
-    # --- Нижняя секция: информация о модели ---
     st.markdown("---")
 
     with st.expander("ℹ️ Информация о модели"):
@@ -233,14 +199,13 @@ def main():
         | Размер входа | {IMAGE_SIZE}×{IMAGE_SIZE} |
         | Число параметров генератора | ~11.4M |
         | Число параметров дискриминатора | ~2.8M |
-        | Loss | MSE Adversarial + Cycle Consistency (λ=10) |
+        | Loss | MSE Adversarial + Cycle Consistency (lambda=10) |
         | Датасет | summer2winter_yosemite |
         | Устройство | {DEVICE} |
         """)
 
-    # --- Batch-режим ---
     st.markdown("---")
-    st.header("📦 Пакетная обработка")
+    st.header("Пакетная обработка")
 
     uploaded_files = st.file_uploader(
         "Загрузите несколько изображений",
@@ -249,34 +214,30 @@ def main():
         key="batch_upload",
     )
 
-if uploaded_files:
-        if st.button("🚀 Обработать все", use_container_width=True):
-            results = []
+    if uploaded_files:
+            if st.button("🚀 Обработать все", use_container_width=True):
+                results = []
 
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+                progress_bar = st.progress(0)
+                status_text = st.empty()
 
-            for i, file in enumerate(uploaded_files):
-                status_text.text(f"Обработка {i + 1}/{len(uploaded_files)}: {file.name}")
+                for i, file in enumerate(uploaded_files):
+                    status_text.text(f"Обработка {i + 1}/{len(uploaded_files)}: {file.name}")
 
-                pil_img = Image.open(file)
-                result_img = process_image(model, pil_img, direction_code)
-                results.append((file.name, pil_img, result_img))
+                    pil_img = Image.open(file)
+                    result_img = process_image(model, pil_img, direction_code)
+                    results.append((file.name, pil_img, result_img))
 
-                progress_bar.progress((i + 1) / len(uploaded_files))
+                    progress_bar.progress((i + 1) / len(uploaded_files))
 
-            status_text.text("Готово!")
+                status_text.text("Готово!")
 
-            # Отображение результатов в сетке
-            for name, original, result in results:
-                st.markdown(f"**{name}**")
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.image(original, caption="Оригинал", use_container_width=True)
-                with col2:
-                    st.image(result, caption="Результат", use_container_width=True)
-                st.markdown("---")
-
-
-if name == "__main__":
-    main()
+                for name, original, result in results:
+                    st.markdown(f"**{name}**")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.image(original, caption="Оригинал", use_container_width=True)
+                    with col2:
+                        st.image(result, caption="Результат", use_container_width=True)
+                    st.markdown("---")
+main()
